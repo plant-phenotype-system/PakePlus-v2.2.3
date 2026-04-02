@@ -1,11 +1,565 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus</title>
-    </head>
-    <body>
-        Hello World
-    </body>
+DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><!
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>植物表型数据驱动的智能决策支持系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tiff.js@1.0.0/tiff.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tifjs@1.0.0/tif.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#22c55e',
+                        secondary: '#10b981',
+                        accent: '#059669',
+                        dark: '#166534',
+                        light: '#dcfce7',
+                        background: '#f8fafc',
+                        'primary-light': '#86efac'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'card': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                        'card-hover': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .transition-all-300 { transition: all 300ms ease-in-out; }
+            .card { @apply bg-white rounded-lg shadow-card p-6 transition-all-300; }
+            .card:hover { @apply shadow-card-hover; }
+            .btn { @apply px-4 py-2 rounded-md font-medium transition-all-300 focus:outline-none focus:ring-2 focus:ring-offset-2 cursor-pointer; }
+            .btn-primary { @apply bg-primary text-white hover:bg-accent focus:ring-primary; }
+            .btn-secondary { @apply bg-gray-200 text-gray-800 hover:bg-gray-300 focus:ring-gray-400; }
+            .btn-outline { @apply border border-primary text-primary hover:bg-primary hover:text-white focus:ring-primary; }
+            .btn-danger { @apply bg-red-500 text-white hover:bg-red-600 focus:ring-red-400; }
+            .input-field { @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent; }
+            .nav-link { @apply flex items-center px-4 py-3 text-gray-700 rounded-md transition-all-300 cursor-pointer; }
+            .nav-link:hover, .nav-link.active { @apply bg-primary bg-opacity-10 text-primary; }
+            .nav-link.active { @apply font-medium; }
+            .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
+            .badge-success { @apply bg-green-100 text-green-800; }
+            .badge-warning { @apply bg-yellow-100 text-yellow-800; }
+            .badge-danger { @apply bg-red-100 text-red-800; }
+            .badge-info { @apply bg-blue-100 text-blue-800; }
+            .progress-bar { @apply h-2 rounded-full bg-gray-200 overflow-hidden; }
+            .progress-value { @apply h-full bg-primary transition-all duration-500 ease-out; }
+        }
+        .empty-state { @apply flex flex-col items-center justify-center py-12 text-gray-400; }
+        .empty-state i { @apply text-5xl mb-4; }
+        .empty-state p { @apply text-sm; }
+        .toast-container { @apply fixed top-4 right-4 z-50 space-y-2; }
+        .toast { @apply px-4 py-3 rounded-lg shadow-lg text-white text-sm flex items-center space-x-2 transform transition-all duration-300; }
+        .toast-success { @apply bg-green-500; }
+        .toast-error { @apply bg-red-500; }
+        .toast-info { @apply bg-blue-500; }
+        .toast-warning { @apply bg-yellow-500; }
+        .modal-overlay { @apply fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center; }
+        .modal-content { @apply bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto; }
+        .drop-zone.drag-over { @apply border-primary bg-green-50; }
+        .drop-zone { @apply border-2 border-dashed border-gray-300 rounded-md p-8 text-center transition-all-300; }
+        table th { @apply px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider; }
+        table td { @apply px-4 py-3 text-sm; }
+    </style>
+</head>
+<body class="bg-background min-h-screen flex flex-col">
+    <div id="toastContainer" class="toast-container"></div>
+
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/f9aeb7e275034bf5bc66529bc3415b2e~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=20260327105127AA43542F63529A34EDCC&rrcfp=f06b921b&x-expires=1777171941&x-signature=DIH20JmcTHlnZbAk5b%2Fd1FKOblg%3D" alt="Logo" class="h-10 w-10">
+                <h1 class="text-xl font-bold text-gray-800">植物表型数据智能决策系统</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <button id="helpBtn" class="btn btn-secondary text-sm">
+                    <i class="fa fa-question-circle mr-1"></i> 帮助
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex">
+        <aside class="w-64 bg-white shadow-sm flex-shrink-0">
+            <nav class="p-4">
+                <ul class="space-y-1">
+                    <li><a href="#" class="nav-link active" data-target="dashboard"><i class="fa fa-dashboard w-5 text-center mr-3"></i><span>系统概览</span></a></li>
+                    <li><a href="#" class="nav-link" data-target="data-management"><i class="fa fa-database w-5 text-center mr-3"></i><span>数据管理</span></a></li>
+                    <li><a href="#" class="nav-link" data-target="feature-analysis"><i class="fa fa-line-chart w-5 text-center mr-3"></i><span>植被特征与模型分析</span></a></li>
+                    <li><a href="#" class="nav-link" data-target="prescription-map"><i class="fa fa-map w-5 text-center mr-3"></i><span>处方图生成</span></a></li>
+                    <li><a href="#" class="nav-link" data-target="dji-adapter"><i class="fa fa-cog w-5 text-center mr-3"></i><span>大疆智农适配</span></a></li>
+                </ul>
+                <hr class="my-4">
+                <div class="bg-light p-3 rounded-md">
+                    <h3 class="font-medium text-dark mb-2 text-sm">研究流程</h3>
+                    <ol class="text-xs text-gray-700 space-y-1" id="workflowSteps">
+                        <li class="flex items-center"><span class="w-5 h-5 rounded-full bg-gray-300 text-white flex items-center justify-center mr-2 text-xs flex-shrink-0" data-step="1">1</span><span>数据采集与管理</span></li>
+                        <li class="flex items-center"><span class="w-5 h-5 rounded-full bg-gray-300 text-white flex items-center justify-center mr-2 text-xs flex-shrink-0" data-step="2">2</span><span>特征提取与分析</span></li>
+                        <li class="flex items-center"><span class="w-5 h-5 rounded-full bg-gray-300 text-white flex items-center justify-center mr-2 text-xs flex-shrink-0" data-step="3">3</span><span>模型训练与评估</span></li>
+                        <li class="flex items-center"><span class="w-5 h-5 rounded-full bg-gray-300 text-white flex items-center justify-center mr-2 text-xs flex-shrink-0" data-step="4">4</span><span>处方图生成</span></li>
+                        <li class="flex items-center"><span class="w-5 h-5 rounded-full bg-gray-300 text-white flex items-center justify-center mr-2 text-xs flex-shrink-0" data-step="5">5</span><span>大疆智农执行</span></li>
+                    </ol>
+                </div>
+            </nav>
+        </aside>
+
+        <div class="flex-1 p-6 overflow-y-auto">
+            <!-- ==================== 系统概览 ==================== -->
+            <section id="dashboard" class="section">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">系统概览</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="card">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-primary bg-opacity-10 text-primary"><i class="fa fa-database fa-2x"></i></div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-500">已上传数据</h3>
+                                <p class="text-2xl font-semibold text-gray-800" id="statFiles">0</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-blue-100 text-blue-600"><i class="fa fa-table fa-2x"></i></div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-500">数据总行数</h3>
+                                <p class="text-2xl font-semibold text-gray-800" id="statRows">0</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-purple-100 text-purple-600"><i class="fa fa-flask fa-2x"></i></div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-500">模型分析次数</h3>
+                                <p class="text-2xl font-semibold text-gray-800" id="statModels">0</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-amber-100 text-amber-600"><i class="fa fa-map fa-2x"></i></div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-500">已生成处方图</h3>
+                                <p class="text-2xl font-semibold text-gray-800" id="statMaps">0</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">最近活动</h3>
+                    <div id="activityList">
+                        <div class="empty-state">
+                            <i class="fa fa-inbox"></i>
+                            <p>暂无活动记录</p>
+                            <p class="mt-1 text-xs">上传数据或执行分析后，活动记录将显示在此处</p>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">快速开始</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="card hover:bg-light cursor-pointer" onclick="navigateTo('data-management')">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-primary bg-opacity-10 text-primary"><i class="fa fa-upload fa-lg"></i></div>
+                            <div class="ml-4">
+                                <h4 class="font-medium text-gray-800">上传数据</h4>
+                                <p class="text-sm text-gray-500">导入 CSV 或 Excel 数据</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card hover:bg-light cursor-pointer" onclick="navigateTo('feature-analysis')">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-blue-100 text-blue-600"><i class="fa fa-line-chart fa-lg"></i></div>
+                            <div class="ml-4">
+                                <h4 class="font-medium text-gray-800">特征分析</h4>
+                                <p class="text-sm text-gray-500">提取植被指数并分析</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card hover:bg-light cursor-pointer" onclick="navigateTo('prescription-map')">
+                        <div class="flex items-center">
+                            <div class="p-3 rounded-full bg-purple-100 text-purple-600"><i class="fa fa-map fa-lg"></i></div>
+                            <div class="ml-4">
+                                <h4 class="font-medium text-gray-800">生成处方图</h4>
+                                <p class="text-sm text-gray-500">创建施肥处方图</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== 数据管理 ==================== -->
+            <section id="data-management" class="section hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">数据管理</h2>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">上传数据</h3>
+                    <div id="dropZone" class="drop-zone">
+                        <div class="mb-4"><i class="fa fa-cloud-upload text-5xl text-gray-300"></i></div>
+                        <h4 class="text-lg font-medium text-gray-600 mb-2">拖拽文件到此处或点击上传</h4>
+                        <p class="text-sm text-gray-400 mb-4">支持 TIF、CSV、Excel (.xlsx)、JSON 格式</p>
+                        <button id="selectFileBtn" class="btn btn-primary"><i class="fa fa-upload mr-1"></i> 选择文件</button>
+                        <input type="file" id="fileInput" class="hidden" accept=".tif,.tiff,.csv,.xlsx,.xls,.json" multiple>
+                    </div>
+                </div>
+
+                <div class="card mb-8">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">已上传文件</h3>
+                        <button id="clearAllFilesBtn" class="btn btn-danger text-sm hidden"><i class="fa fa-trash mr-1"></i> 清空全部</button>
+                    </div>
+                    <div id="fileListContainer">
+                        <div class="empty-state">
+                            <i class="fa fa-folder-open"></i>
+                            <p>尚未上传任何文件</p>
+                            <p class="mt-1 text-xs">请通过上方区域上传数据文件</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" id="dataPreviewCard" style="display:none;">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">数据预览 - <span id="previewFileName" class="text-primary"></span></h3>
+                        <div class="flex space-x-2">
+                            <button id="exportCurrentDataBtn" class="btn btn-secondary text-sm"><i class="fa fa-download mr-1"></i> 导出 CSV</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto" id="dataPreviewTable"></div>
+                    <div class="mt-3 text-xs text-gray-400" id="dataPreviewInfo"></div>
+                </div>
+            </section>
+
+            <!-- ==================== 植被特征与模型分析 ==================== -->
+            <section id="feature-analysis" class="section hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">植被特征与模型分析</h2>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">数据源选择</h3>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">选择已上传的数据集</label>
+                        <select id="featureDataSource" class="input-field">
+                            <option value="">-- 请先上传数据 --</option>
+                        </select>
+                    </div>
+                    <div id="featureColumnsInfo" class="text-sm text-gray-500" style="display:none;">
+                        <p>检测到以下数值列可用于分析：</p>
+                        <div id="featureColumnsList" class="flex flex-wrap gap-2 mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">植被指数计算</h3>
+                    <p class="text-sm text-gray-500 mb-4">多光谱波段：红光(Red)、绿光(Green)、近红外(NIR)、红边(RedEdge)；RGB波段：蓝光(Blue)。请根据数据选择对应波段列。</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">近红外波段列 (NIR) <span class="text-red-500">*</span></label>
+                                <select id="nirColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">红光波段列 (Red) <span class="text-red-500">*</span></label>
+                                <select id="redColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">绿光波段列 (Green)</label>
+                                <select id="greenColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">红边波段列 (RedEdge)</label>
+                                <select id="redEdgeColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">蓝光波段列 (Blue)</label>
+                                <select id="blueColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">目标变量列 (如 SPAD)</label>
+                                <select id="targetColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                            </div>
+                            <button id="calcVegIndicesBtn" class="btn btn-primary"><i class="fa fa-calculator mr-1"></i> 计算植被指数</button>
+                        </div>
+                        <div>
+                            <div class="mb-3 text-sm font-medium text-gray-700">可选植被指数</div>
+                            <div class="space-y-2">
+                                <label class="flex items-center"><input type="checkbox" id="chkNDVI" checked class="mr-2"><span class="text-sm text-gray-700">NDVI = (NIR - Red) / (NIR + Red) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkRVI" checked class="mr-2"><span class="text-sm text-gray-700">RVI = NIR / Red <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkGNDVI" class="mr-2"><span class="text-sm text-gray-700">GNDVI = (NIR - Green) / (NIR + Green) <span class="text-gray-400 text-xs">[需NIR, Green]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkSAVI" class="mr-2"><span class="text-sm text-gray-700">SAVI = ((NIR - Red) / (NIR + Red + L)) * (1 + L)，L=0.5 <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkEVI" class="mr-2"><span class="text-sm text-gray-700">EVI = 2.5 * ((NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)) <span class="text-gray-400 text-xs">[需NIR, Red, Blue]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkNDRE" class="mr-2"><span class="text-sm text-gray-700">NDRE = (NIR - RedEdge) / (NIR + RedEdge) <span class="text-gray-400 text-xs">[需NIR, RedEdge]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkOSAVI" class="mr-2"><span class="text-sm text-gray-700">OSAVI = (NIR - Red) / (NIR + Red + 0.16) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-8" id="correlationCard" style="display:none;">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">相关性分析</h3>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200" id="correlationTable"></table>
+                        </div>
+                        <div>
+                            <canvas id="correlationChart" height="300"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" id="modelCard" style="display:none;">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">回归模型分析</h3>
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">自变量 (X)</label>
+                                <div id="modelXVars" class="space-y-1 max-h-40 overflow-y-auto border rounded-md p-2"></div>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">因变量 (Y)</label>
+                                <select id="modelYVar" class="input-field"></select>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">训练集比例</label>
+                                <div class="flex items-center">
+                                    <input type="range" id="trainRatio" min="0.5" max="0.9" step="0.05" value="0.7" class="w-full mr-3">
+                                    <span id="trainRatioLabel" class="text-sm text-gray-700 w-10">70%</span>
+                                </div>
+                            </div>
+                            <button id="runModelBtn" class="btn btn-primary w-full"><i class="fa fa-play mr-1"></i> 运行回归分析</button>
+                        </div>
+                        <div class="lg:col-span-2">
+                            <div id="modelResultsArea" style="display:none;">
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                    <div class="border rounded-md p-3 text-center">
+                                        <div class="text-xs text-gray-500">R²</div>
+                                        <div class="text-xl font-bold text-primary" id="metricR2">-</div>
+                                    </div>
+                                    <div class="border rounded-md p-3 text-center">
+                                        <div class="text-xs text-gray-500">RMSE</div>
+                                        <div class="text-xl font-bold text-blue-600" id="metricRMSE">-</div>
+                                    </div>
+                                    <div class="border rounded-md p-3 text-center">
+                                        <div class="text-xs text-gray-500">MAE</div>
+                                        <div class="text-xl font-bold text-purple-600" id="metricMAE">-</div>
+                                    </div>
+                                    <div class="border rounded-md p-3 text-center">
+                                        <div class="text-xs text-gray-500">样本数</div>
+                                        <div class="text-xl font-bold text-amber-600" id="metricN">-</div>
+                                    </div>
+                                </div>
+                                <div class="border rounded-md p-4 mb-4">
+                                    <h4 class="text-sm font-medium text-gray-700 mb-2">回归系数</h4>
+                                    <div id="regressionCoeffs" class="text-sm"></div>
+                                </div>
+                                <div class="border rounded-md p-4">
+                                    <h4 class="text-sm font-medium text-gray-700 mb-2">预测值 vs 实际值</h4>
+                                    <canvas id="predictionChart" height="250"></canvas>
+                                </div>
+                            </div>
+                            <div id="modelEmptyState" class="empty-state">
+                                <i class="fa fa-line-chart"></i>
+                                <p>计算植被指数后可运行回归分析</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== 处方图生成 ==================== -->
+            <section id="prescription-map" class="section hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">处方图生成</h2>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">处方图配置</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择数据集</label>
+                            <select id="mapDataSource" class="input-field"><option value="">-- 请选择 --</option></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">施肥量数据列</label>
+                            <select id="mapValueCol" class="input-field"><option value="">-- 选择列 --</option></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">插值网格密度</label>
+                            <select id="mapGridSize" class="input-field">
+                                <option value="20">20 x 20</option>
+                                <option value="30" selected>30 x 30</option>
+                                <option value="50">50 x 50</option>
+                                <option value="80">80 x 80</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">地块长度</label>
+                            <input type="number" id="plotLength" class="input-field" placeholder="如 100" step="any">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">地块宽度</label>
+                            <input type="number" id="plotWidth" class="input-field" placeholder="如 50" step="any">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">单位</label>
+                            <select id="plotUnit" class="input-field">
+                                <option value="m">米</option>
+                                <option value="ha">公顷</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">施肥量单位</label>
+                            <select id="fertilizerUnit" class="input-field">
+                                <option value="kg/ha">kg/ha</option>
+                                <option value="kg/m²">kg/m²</option>
+                                <option value="g/m²">g/m²</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">最小施肥量</label>
+                            <input type="number" id="mapMinVal" class="input-field" placeholder="自动检测" step="any">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">最大施肥量</label>
+                            <input type="number" id="mapMaxVal" class="input-field" placeholder="自动检测" step="any">
+                        </div>
+                    </div>
+                    <button id="generateMapBtn" class="btn btn-primary"><i class="fa fa-map mr-1"></i> 生成处方图</button>
+                </div>
+
+                <div class="card" id="prescriptionMapResult" style="display:none;">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">处方图预览</h3>
+                        <div class="flex space-x-2">
+                            <button id="exportMapImgBtn" class="btn btn-secondary text-sm"><i class="fa fa-image mr-1"></i> 导出 PNG</button>
+                            <button id="exportMapTifBtn" class="btn btn-secondary text-sm"><i class="fa fa-file-image-o mr-1"></i> 导出 TIF</button>
+                            <button id="exportMapCSVBtn" class="btn btn-primary text-sm"><i class="fa fa-download mr-1"></i> 导出 CSV</button>
+                        </div>
+                    </div>
+                    <div class="flex flex-col lg:flex-row gap-6">
+                        <div class="flex-1 border rounded-md p-2 bg-gray-50">
+                            <canvas id="prescriptionCanvas" class="w-full"></canvas>
+                        </div>
+                        <div class="w-full lg:w-48 flex-shrink-0">
+                            <div class="border rounded-md p-3">
+                                <h4 class="text-sm font-medium text-gray-700 mb-2">图例</h4>
+                                <canvas id="legendCanvas" width="160" height="200"></canvas>
+                            </div>
+                            <div class="border rounded-md p-3 mt-3">
+                                <h4 class="text-sm font-medium text-gray-700 mb-2">统计信息</h4>
+                                <div id="mapStats" class="text-xs text-gray-600 space-y-1"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== 大疆智农适配 ==================== -->
+            <section id="dji-adapter" class="section hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">大疆智农适配</h2>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">处方图导出</h3>
+                    <div id="djiNoMapWarning" class="p-4 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
+                        <div class="flex items-start">
+                            <i class="fa fa-exclamation-triangle text-yellow-500 mr-2 mt-0.5"></i>
+                            <div>
+                                <p class="text-sm text-yellow-800 font-medium">尚未生成处方图</p>
+                                <p class="text-xs text-yellow-600 mt-1">请先在"处方图生成"页面生成处方图，然后返回此处导出。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="djiExportForm" style="display:none;">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">导出格式</label>
+                                    <select id="djiFormat" class="input-field">
+                                        <option value="tif">TIF (图像格式)</option>
+                                        <option value="csv">CSV (通用格式)</option>
+                                        <option value="kml">KML (Google Earth)</option>
+                                        <option value="shp">Shapefile (ArcGIS)</option>
+                                    </select>
+                                </div>
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">文件名</label>
+                                    <input type="text" id="djiFileName" class="input-field" value="prescription_map" placeholder="输入文件名">
+                                </div>
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">坐标系</label>
+                                    <select id="djiCRS" class="input-field">
+                                        <option value="wgs84">WGS 84 (EPSG:4326)</option>
+                                        <option value="cgcs2000">CGCS2000 (EPSG:4490)</option>
+                                        <option value="utm">UTM</option>
+                                    </select>
+                                </div>
+                                <button id="djiExportBtn" class="btn btn-primary"><i class="fa fa-download mr-1"></i> 导出文件</button>
+                            </div>
+                            <div class="border rounded-md p-4">
+                                <h4 class="text-sm font-medium text-gray-700 mb-3">大疆智农导入指引</h4>
+                                <div class="space-y-3 text-sm text-gray-600">
+                                    <div class="flex"><span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center mr-2 flex-shrink-0 text-xs">1</span><p>打开大疆智农 App，进入"作业管理"</p></div>
+                                    <div class="flex"><span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center mr-2 flex-shrink-0 text-xs">2</span><p>点击"新建作业"，选择"施肥作业"</p></div>
+                                    <div class="flex"><span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center mr-2 flex-shrink-0 text-xs">3</span><p>选择"导入处方图"，上传导出的 CSV 文件</p></div>
+                                    <div class="flex"><span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center mr-2 flex-shrink-0 text-xs">4</span><p>确认处方图信息，设置作业参数</p></div>
+                                    <div class="flex"><span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center mr-2 flex-shrink-0 text-xs">5</span><p>保存作业计划，连接无人机执行</p></div>
+                                </div>
+                                <div class="mt-4 p-3 bg-blue-50 rounded-md">
+                                    <div class="flex"><i class="fa fa-info-circle text-blue-500 mr-2"></i><p class="text-xs text-blue-700">推荐使用 CSV 格式导出，兼容性最好。确保文件中的坐标与实际地块坐标一致。</p></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- 帮助弹窗 -->
+    <div id="helpModal" class="modal-overlay" style="display:none;">
+        <div class="modal-content p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">使用帮助</h3>
+                <button id="closeHelpBtn" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div class="space-y-4 text-sm text-gray-600">
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-1">1. 数据管理</h4>
+                    <p>支持上传 CSV、Excel、JSON 格式的数据文件。CSV 文件应包含表头行，数据以逗号分隔。上传后可在页面下方预览数据内容。</p>
+                </div>
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-1">2. 植被特征分析</h4>
+                    <p>选择已上传的数据集，指定近红外(NIR)和红光(Red)波段列，系统将自动计算 NDVI、RVI 等植被指数。如指定了目标变量，可进行相关性和回归分析。</p>
+                </div>
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-1">3. 处方图生成</h4>
+                    <p>选择包含坐标和数值的数据集，系统将通过 IDW（反距离加权）插值生成处方图，支持导出为图片或 CSV。</p>
+                </div>
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-1">4. 大疆智农适配</h4>
+                    <p>将处方图数据导出为 CSV 格式，可直接导入大疆智农 App 使用。</p>
+                </div>
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-1">数据格式建议</h4>
+                    <p>CSV 文件第一行为列名，后续每行为一条数据记录。数值列不要包含中文单位，纯数字即可。坐标列支持经纬度或局部坐标。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
 </html>
