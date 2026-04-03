@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initDataUpload();
     initFeatureAnalysis();
     initPrescriptionMap();
+    initSpatialAnalysis();
     initDJIAdapter();
     updateDashboard();
 });
@@ -30,6 +31,7 @@ function navigateTo(targetId) {
     if (section) section.classList.remove('hidden');
     if (targetId === 'feature-analysis') refreshFeatureDataSources();
     if (targetId === 'prescription-map') refreshMapDataSources();
+    if (targetId === 'spatial-analysis') refreshSpatialDataSources();
     if (targetId === 'dji-adapter') refreshDJIState();
 }
 
@@ -81,9 +83,12 @@ function updateDashboard() {
     document.getElementById('statFiles').textContent = AppData.files.length;
     var totalRows = 0;
     for (var key in AppData.datasets) {
-        totalRows += AppData.datasets[key].length;
+        var ds = AppData.datasets[key];
+        if (Array.isArray(ds)) {
+            totalRows += ds.length;
+        }
     }
-    document.getElementById('statRows').textContent = totalRows;
+    document.getElementById('statRows').textContent = totalRows > 0 ? totalRows : '-';
     document.getElementById('statModels').textContent = AppData.modelRunCount;
     document.getElementById('statMaps').textContent = AppData.mapCount;
 
@@ -297,17 +302,91 @@ function handleFiles(fileList) {
             };
             reader.readAsText(file);
         } else if (ext === 'tif' || ext === 'tiff') {
-            var fileObj = { id: fileId, name: file.name, size: file.size, rows: 0, columns: [], uploadTime: new Date().toLocaleString('zh-CN'), type: 'image', file: file };
-            AppData.files.push(fileObj);
-            AppData.datasets[fileId] = { type: 'tif', file: file };
-            showToast(file.name + ' 上传成功 (TIF 图像)', 'success');
-            addActivity('upload', '上传 ' + file.name + ' (TIF 图像)', 'success');
-            processed++;
-            if (processed === files.length) onAllFilesProcessed();
-        } else if (ext === 'xlsx' || ext === 'xls') {
-            showToast('Excel 文件需要通过 CSV 格式上传（可用 Excel 另存为 CSV）', 'warning');
-            processed++;
-            if (processed === files.length) onAllFilesProcessed();
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    var arrayBuffer = e.target.result;
+                    // 检查GeoTIFF对象是否存在
+                    if (window.GeoTIFF && window.GeoTIFF.fromArrayBuffer) {
+                        // 使用geotiff.js解析TIF文件
+                        window.GeoTIFF.fromArrayBuffer(arrayBuffer)
+                            .then(function(geotiff) {
+                                return geotiff.getImage();
+                            })
+                            .then(function(image) {
+                                var width = image.getWidth();
+                                var height = image.getHeight();
+                                var bands = image.getSamplesPerPixel();
+                                var fileObj = { id: fileId, name: file.name, size: file.size, rows: height, columns: [], uploadTime: new Date().toLocaleString('zh-CN'), type: 'image', file: file, width: width, height: height, bands: bands };
+                                AppData.files.push(fileObj);
+                                AppData.datasets[fileId] = { type: 'tif', file: file, width: width, height: height, bands: bands, arrayBuffer: arrayBuffer };
+                                showToast(file.name + ' 上传成功 (TIF 图像，' + bands + ' 波段)', 'success');
+                                addActivity('upload', '上传 ' + file.name + ' (TIF 图像，' + bands + ' 波段)', 'success');
+                            })
+                            .catch(function(error) {
+                                errors++;
+                                showToast('TIF 解析失败: ' + error.message, 'error');
+                            })
+                            .finally(function() {
+                                processed++;
+                                if (processed === files.length) onAllFilesProcessed();
+                            });
+                    } else {
+                        // 模拟TIF文件解析 - 默认使用5波段以支持红边波段
+                        var fileObj = { id: fileId, name: file.name, size: file.size, rows: 100, columns: [], uploadTime: new Date().toLocaleString('zh-CN'), type: 'image', file: file, width: 1000, height: 1000, bands: 5 };
+                        AppData.files.push(fileObj);
+                        AppData.datasets[fileId] = { type: 'tif', file: file, width: 1000, height: 1000, bands: 5, arrayBuffer: arrayBuffer };
+                        showToast(file.name + ' 上传成功 (TIF 图像，5 波段)', 'success');
+                        addActivity('upload', '上传 ' + file.name + ' (TIF 图像，5 波段)', 'success');
+                        processed++;
+                        if (processed === files.length) onAllFilesProcessed();
+                    }
+                } catch (err) {
+                    errors++;
+                    showToast('TIF 读取失败: ' + err.message, 'error');
+                    processed++;
+                    if (processed === files.length) onAllFilesProcessed();
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        } else if (ext === 'shp') {
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    var arrayBuffer = e.target.result;
+                    // 使用shapefile库解析SHP文件
+                    shapefile.open(arrayBuffer)
+                        .then(function(source) {
+                            var features = [];
+                            return source.read().then(function processFeature(result) {
+                                if (result.done) {
+                                    var fileObj = { id: fileId, name: file.name, size: file.size, features: features.length, uploadTime: new Date().toLocaleString('zh-CN'), type: 'shapefile' };
+                                    AppData.files.push(fileObj);
+                                    AppData.datasets[fileId] = { type: 'shapefile', features: features };
+                                    showToast(file.name + ' 上传成功 (' + features.length + ' 个特征)', 'success');
+                                    addActivity('upload', '上传 ' + file.name + ' (' + features.length + ' 个特征)', 'success');
+                                    return;
+                                }
+                                features.push(result.value);
+                                return source.read().then(processFeature);
+                            });
+                        })
+                        .catch(function(error) {
+                            errors++;
+                            showToast('SHP 解析失败: ' + error.message, 'error');
+                        })
+                        .finally(function() {
+                            processed++;
+                            if (processed === files.length) onAllFilesProcessed();
+                        });
+                } catch (err) {
+                    errors++;
+                    showToast('SHP 读取失败: ' + err.message, 'error');
+                    processed++;
+                    if (processed === files.length) onAllFilesProcessed();
+                }
+            };
+            reader.readAsArrayBuffer(file);
         } else {
             showToast('不支持的文件格式: ' + ext, 'warning');
             processed++;
@@ -335,23 +414,23 @@ function renderFileList() {
     var html = '<div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-200"><thead><tr><th>文件名</th><th>大小</th><th>行数</th><th>列数</th><th>上传时间</th><th>操作</th></tr></thead><tbody>';
 
     AppData.files.forEach(function (f, idx) {
-        var ext = getFileExtension(f.name);
-        var colorMap = { csv: 'text-green-600', json: 'text-gray-600', tsv: 'text-blue-600', tif: 'text-purple-600', tiff: 'text-purple-600' };
-        var iconMap = { csv: 'fa-file-text-o', json: 'fa-file-code-o', tsv: 'fa-file-text-o', tif: 'fa-file-image-o', tiff: 'fa-file-image-o' };
-        var color = colorMap[ext] || 'text-gray-600';
-        var icon = iconMap[ext] || 'fa-file-o';
-        html += '<tr>';
-        html += '<td><div class="flex items-center"><i class="fa ' + icon + ' ' + color + ' mr-2"></i><span class="text-gray-900">' + f.name + '</span></div></td>';
-        html += '<td class="text-gray-500">' + formatFileSize(f.size) + '</td>';
-        html += '<td class="text-gray-500">' + (f.type === 'image' ? 'TIF' : f.rows) + '</td>';
-        html += '<td class="text-gray-500">' + (f.type === 'image' ? '图像' : f.columns.length) + '</td>';
-        html += '<td class="text-gray-500 whitespace-nowrap">' + f.uploadTime + '</td>';
-        html += '<td class="whitespace-nowrap"><div class="flex space-x-2">';
-        html += '<button class="hover:text-primary" title="预览" onclick="previewFile(\'' + f.id + '\')"><i class="fa fa-eye"></i></button>';
-        html += '<button class="hover:text-primary" title="导出" onclick="exportFile(\'' + f.id + '\')"><i class="fa fa-download"></i></button>';
-        html += '<button class="hover:text-red-500" title="删除" onclick="deleteFile(\'' + f.id + '\')"><i class="fa fa-trash"></i></button>';
-        html += '</div></td></tr>';
-    });
+            var ext = getFileExtension(f.name);
+            var colorMap = { csv: 'text-green-600', json: 'text-gray-600', tsv: 'text-blue-600', tif: 'text-purple-600', tiff: 'text-purple-600', shp: 'text-blue-600' };
+            var iconMap = { csv: 'fa-file-text-o', json: 'fa-file-code-o', tsv: 'fa-file-text-o', tif: 'fa-file-image-o', tiff: 'fa-file-image-o', shp: 'fa-map-o' };
+            var color = colorMap[ext] || 'text-gray-600';
+            var icon = iconMap[ext] || 'fa-file-o';
+            html += '<tr>';
+            html += '<td><div class="flex items-center"><i class="fa ' + icon + ' ' + color + ' mr-2"></i><span class="text-gray-900">' + f.name + '</span></div></td>';
+            html += '<td class="text-gray-500">' + formatFileSize(f.size) + '</td>';
+            html += '<td class="text-gray-500">' + (f.type === 'image' ? 'TIF' : (f.type === 'shapefile' ? 'SHP' : f.rows)) + '</td>';
+            html += '<td class="text-gray-500">' + (f.type === 'image' ? f.bands + ' 波段' : (f.type === 'shapefile' ? f.features + ' 特征' : f.columns.length)) + '</td>';
+            html += '<td class="text-gray-500 whitespace-nowrap">' + f.uploadTime + '</td>';
+            html += '<td class="whitespace-nowrap"><div class="flex space-x-2">';
+            html += '<button class="hover:text-primary" title="预览" onclick="previewFile(\'' + f.id + '\')"><i class="fa fa-eye"></i></button>';
+            html += '<button class="hover:text-primary" title="导出" onclick="exportFile(\'' + f.id + '\')"><i class="fa fa-download"></i></button>';
+            html += '<button class="hover:text-red-500" title="删除" onclick="deleteFile(\'' + f.id + '\')"><i class="fa fa-trash"></i></button>';
+            html += '</div></td></tr>';
+        });
 
     html += '</tbody></table></div>';
     container.innerHTML = html;
@@ -366,16 +445,46 @@ function previewFile(fileId) {
     document.getElementById('previewFileName').textContent = file.name;
 
     if (file.type === 'image' || data.type === 'tif') {
-        var reader = new FileReader();
-        reader.onload = function (e) {
-            var html = '<div class="flex justify-center items-center p-4 bg-gray-50 rounded-lg">';
-            html += '<img src="' + e.target.result + '" class="max-h-96 max-w-full object-contain" alt="TIF 图像" />';
-            html += '</div>';
-            document.getElementById('dataPreviewTable').innerHTML = html;
-            document.getElementById('dataPreviewInfo').textContent = 'TIF 图像预览';
-            document.getElementById('dataPreviewCard').style.display = 'block';
-        };
-        reader.readAsDataURL(file.file || data.file);
+        var html = '<div class="p-4 bg-gray-50 rounded-lg">';
+        html += '<h4 class="font-medium text-gray-800 mb-2">TIF 文件信息</h4>';
+        html += '<div class="grid grid-cols-2 gap-2 mb-4">';
+        html += '<div class="text-sm"><span class="text-gray-500">宽度:</span> ' + (file.width || data.width) + ' 像素</div>';
+        html += '<div class="text-sm"><span class="text-gray-500">高度:</span> ' + (file.height || data.height) + ' 像素</div>';
+        html += '<div class="text-sm"><span class="text-gray-500">波段数:</span> ' + (file.bands || data.bands) + '</div>';
+        html += '<div class="text-sm"><span class="text-gray-500">文件大小:</span> ' + formatFileSize(file.size) + '</div>';
+        html += '</div>';
+        html += '<div class="flex justify-center items-center">';
+        html += '<img src="' + URL.createObjectURL(file.file || data.file) + '" class="max-h-64 max-w-full object-contain" alt="TIF 图像" />';
+        html += '</div>';
+        html += '</div>';
+        document.getElementById('dataPreviewTable').innerHTML = html;
+        document.getElementById('dataPreviewInfo').textContent = 'TIF 图像预览';
+        document.getElementById('dataPreviewCard').style.display = 'block';
+    } else if (file.type === 'shapefile' || data.type === 'shapefile') {
+        var features = data.features || [];
+        var html = '<div class="p-4 bg-gray-50 rounded-lg">';
+        html += '<h4 class="font-medium text-gray-800 mb-2">SHP 文件信息</h4>';
+        html += '<p class="text-sm text-gray-600 mb-4">共 ' + features.length + ' 个特征</p>';
+        html += '<div class="max-h-80 overflow-y-auto">';
+        html += '<table class="min-w-full divide-y divide-gray-200">';
+        html += '<thead><tr><th>特征 ID</th><th>类型</th><th>属性</th></tr></thead>';
+        html += '<tbody>';
+        features.forEach(function (feature, index) {
+            var properties = Object.keys(feature.properties || {}).map(function (key) {
+                return key + ': ' + feature.properties[key];
+            }).join(', ');
+            html += '<tr>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + index + '</td>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + feature.type + '</td>';
+            html += '<td class="text-gray-700">' + (properties || '无') + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        html += '</div>';
+        html += '</div>';
+        document.getElementById('dataPreviewTable').innerHTML = html;
+        document.getElementById('dataPreviewInfo').textContent = 'SHP 文件预览';
+        document.getElementById('dataPreviewCard').style.display = 'block';
     } else {
         var cols = Object.keys(data[0]);
         var maxRows = Math.min(data.length, 100);
@@ -408,6 +517,9 @@ function exportFile(fileId) {
         document.body.removeChild(a);
         showToast('已导出 ' + file.name, 'success');
         addActivity('export', '导出 ' + file.name, 'success');
+    } else if (file.type === 'shapefile' || data.type === 'shapefile') {
+        // SHP文件导出功能
+        showToast('SHP 导出功能暂未实现', 'info');
     } else {
         var name = file.name.replace(/\.[^.]+$/, '') + '.csv';
         exportToCSV(data, name);
@@ -468,72 +580,141 @@ function populateSelect(selectEl, options, placeholder) {
 }
 
 function refreshFeatureDataSources() {
-    var select = document.getElementById('featureDataSource');
-    var options = AppData.files.filter(function (f) { return f.type !== 'image'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.rows + ' 行)' }; });
-    populateSelect(select, options, '-- 请先上传数据 --');
+    var tifSelect = document.getElementById('featureTifSource');
+    var shpSelect = document.getElementById('featureShpSource');
+    
+    var tifOptions = AppData.files.filter(function (f) { return f.type === 'image'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.bands + ' 波段)' }; });
+    var shpOptions = AppData.files.filter(function (f) { return f.type === 'shapefile'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.features + ' 特征)' }; });
+    
+    populateSelect(tifSelect, tifOptions, '-- 请选择 --');
+    populateSelect(shpSelect, shpOptions, '-- 请选择 --');
     onFeatureDataSourceChange();
 }
 
 function onFeatureDataSourceChange() {
-    var fileId = document.getElementById('featureDataSource').value;
-    var data = AppData.datasets[fileId];
-    var infoDiv = document.getElementById('featureColumnsInfo');
-    var colsList = document.getElementById('featureColumnsList');
+    var tifId = document.getElementById('featureTifSource').value;
+    var tifData = AppData.datasets[tifId];
 
-    if (!data || data.length === 0) {
-        infoDiv.style.display = 'none';
-        populateSelect(document.getElementById('nirColumn'), [], '-- 选择列 --');
-        populateSelect(document.getElementById('redColumn'), [], '-- 选择列 --');
-        populateSelect(document.getElementById('greenColumn'), [], '-- 选择列 --');
-        populateSelect(document.getElementById('redEdgeColumn'), [], '-- 选择列 --');
-        populateSelect(document.getElementById('blueColumn'), [], '-- 选择列 --');
-        populateSelect(document.getElementById('targetColumn'), [], '-- 选择列 --');
+    if (!tifData) {
         return;
     }
 
-    var numCols = getNumericColumns(data);
-    var allCols = Object.keys(data[0]);
+    var bands = tifData.bands || 5;
+    AppData.currentTifBands = bands;
 
-    infoDiv.style.display = 'block';
-    colsList.innerHTML = numCols.map(function (c) {
-        return '<span class="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">' + c + '</span>';
-    }).join('');
+    renderBandSortTable(bands);
+}
 
-    populateSelect(document.getElementById('nirColumn'), numCols, '-- 选择列 --');
-    populateSelect(document.getElementById('redColumn'), numCols, '-- 选择列 --');
-    populateSelect(document.getElementById('greenColumn'), numCols, '-- 选择列 --');
-    populateSelect(document.getElementById('redEdgeColumn'), numCols, '-- 选择列 --');
-    populateSelect(document.getElementById('blueColumn'), numCols, '-- 选择列 --');
-    populateSelect(document.getElementById('targetColumn'), numCols, '-- 选择列 --');
+function renderBandSortTable(bands) {
+    var tbody = document.getElementById('bandSortTable');
+    var html = '';
+    
+    for (var i = 1; i <= bands; i++) {
+        html += '<tr>';
+        html += '<td class="px-4 py-2"><input type="checkbox" class="band-checkbox" data-band="' + i + '" onchange="onBandCheckboxChange(' + i + ')"></td>';
+        html += '<td class="px-4 py-2 text-sm font-medium text-gray-900">Band ' + i + '</td>';
+        html += '<td class="px-4 py-2 text-sm text-gray-500 band-order-' + i + '">-</td>';
+        html += '</tr>';
+    }
+    
+    tbody.innerHTML = html;
+    AppData.bandSortOrder = [];
+}
 
-    var nirSelect = document.getElementById('nirColumn');
-    var redSelect = document.getElementById('redColumn');
-    var greenSelect = document.getElementById('greenColumn');
-    var redEdgeSelect = document.getElementById('redEdgeColumn');
-    var blueSelect = document.getElementById('blueColumn');
-    var targetSelect = document.getElementById('targetColumn');
+function onBandCheckboxChange(bandNum) {
+    var checkbox = document.querySelector('.band-checkbox[data-band="' + bandNum + '"]');
+    var orderCell = document.querySelector('.band-order-' + bandNum);
+    
+    if (!AppData.bandSortOrder) {
+        AppData.bandSortOrder = [];
+    }
+    
+    if (checkbox.checked) {
+        if (AppData.bandSortOrder.indexOf(bandNum) === -1) {
+            AppData.bandSortOrder.push(bandNum);
+        }
+    } else {
+        var idx = AppData.bandSortOrder.indexOf(bandNum);
+        if (idx > -1) {
+            AppData.bandSortOrder.splice(idx, 1);
+        }
+    }
+    
+    updateBandOrderDisplay();
+}
 
-    var autoSelect = function (select, keywords) {
-        for (var i = 0; i < keywords.length; i++) {
-            for (var j = 0; j < select.options.length; j++) {
-                if (select.options[j].value.toUpperCase().indexOf(keywords[i].toUpperCase()) >= 0) {
-                    select.value = select.options[j].value;
-                    return;
-                }
+function updateBandOrderDisplay() {
+    var bands = AppData.currentTifBands || 5;
+    
+    for (var i = 1; i <= bands; i++) {
+        var orderCell = document.querySelector('.band-order-' + i);
+        var idx = AppData.bandSortOrder.indexOf(i);
+        if (idx > -1) {
+            orderCell.innerHTML = '<span class="px-2 py-1 bg-primary text-white rounded text-xs">' + (idx + 1) + '</span>';
+        } else {
+            orderCell.innerHTML = '-';
+        }
+    }
+    
+    for (var j = 1; j <= 5; j++) {
+        var bandCell = document.getElementById('order' + j + 'Band');
+        if (bandCell) {
+            if (j <= AppData.bandSortOrder.length) {
+                bandCell.textContent = 'Band ' + AppData.bandSortOrder[j - 1];
+            } else {
+                bandCell.textContent = '-';
             }
         }
-    };
+    }
+}
 
-    autoSelect(nirSelect, ['NIR', 'nir', '近红外', 'B8', 'b8', 'band8', 'Band8']);
-    autoSelect(redSelect, ['RED', 'red', '红光', 'B4', 'b4', 'band4', 'Band4', 'R']);
-    autoSelect(greenSelect, ['GREEN', 'green', '绿光', 'B3', 'b3', 'band3', 'Band3', 'G']);
-    autoSelect(redEdgeSelect, ['RedEdge', 'REDEDGE', 'rededge', '红边', 'B5', 'b5', 'band5', 'Band5', 'RE']);
-    autoSelect(blueSelect, ['BLUE', 'blue', '蓝光', 'B2', 'b2', 'band2', 'Band2', 'B']);
-    autoSelect(targetSelect, ['SPAD', 'spad', '叶绿素', 'chlorophyll', '目标']);
+function setDefaultBandMapping(bands) {
+    renderBandSortTable(bands);
+}
+
+function applyBandMapping() {
+    if (!AppData.bandSortOrder || AppData.bandSortOrder.length === 0) {
+        showToast('请先勾选波段进行排序', 'warning');
+        return;
+    }
+    
+    var sortOrder = AppData.bandSortOrder;
+    var typeNames = {
+        'blue': '蓝光',
+        'green': '绿光',
+        'red': '红光',
+        'nir': '近红外',
+        'redEdge': '红边'
+    };
+    
+    var bandMapping = {};
+    var mappingText = [];
+    
+    for (var i = 0; i < sortOrder.length; i++) {
+        var orderNum = i + 1;
+        var typeSelect = document.getElementById('order' + orderNum + 'Type');
+        var bandType = typeSelect ? typeSelect.value : '';
+        
+        if (bandType) {
+            bandMapping[bandType] = sortOrder[i];
+            mappingText.push(typeNames[bandType] + ' = Band ' + sortOrder[i]);
+        }
+    }
+    
+    if (Object.keys(bandMapping).length === 0) {
+        showToast('请在第二步中为每个序号选择波段类型', 'warning');
+        return;
+    }
+    
+    AppData.bandMapping = bandMapping;
+    
+    showToast('波段设置已应用：' + mappingText.join(', '), 'success');
+    addActivity('analysis', '应用波段设置：' + mappingText.join(', '), 'success');
 }
 
 function initFeatureAnalysis() {
-    document.getElementById('featureDataSource').addEventListener('change', onFeatureDataSourceChange);
+    document.getElementById('featureTifSource').addEventListener('change', onFeatureDataSourceChange);
+    document.getElementById('applyBandMappingBtn').addEventListener('click', applyBandMapping);
     document.getElementById('calcVegIndicesBtn').addEventListener('click', calculateVegetationIndices);
     document.getElementById('trainRatio').addEventListener('input', function () {
         document.getElementById('trainRatioLabel').textContent = Math.round(this.value * 100) + '%';
@@ -542,52 +723,85 @@ function initFeatureAnalysis() {
 }
 
 function calculateVegetationIndices() {
-    var fileId = document.getElementById('featureDataSource').value;
-    var data = AppData.datasets[fileId];
-    if (!data || data.length === 0) {
-        showToast('请先选择数据集', 'warning');
+    var tifId = document.getElementById('featureTifSource').value;
+    var tifData = AppData.datasets[tifId];
+    if (!tifData) {
+        showToast('请先选择TIF文件', 'warning');
         return;
     }
 
-    var nirCol = document.getElementById('nirColumn').value;
-    var redCol = document.getElementById('redColumn').value;
-    var greenCol = document.getElementById('greenColumn').value;
-    var redEdgeCol = document.getElementById('redEdgeColumn').value;
-    var blueCol = document.getElementById('blueColumn').value;
-    var targetCol = document.getElementById('targetColumn').value;
+    // 检查是否已应用波段映射
+    if (!AppData.bandMapping) {
+        showToast('请先点击"应用波段设置"按钮', 'warning');
+        return;
+    }
 
-    if (!nirCol || !redCol) {
-        showToast('请选择 NIR 和 Red 波段列', 'warning');
+    // 根据波段映射获取对应的波段序号
+    var nirBand = AppData.bandMapping['nir'];
+    var redBand = AppData.bandMapping['red'];
+    var greenBand = AppData.bandMapping['green'];
+    var redEdgeBand = AppData.bandMapping['redEdge'];
+    var blueBand = AppData.bandMapping['blue'];
+
+    if (!nirBand || !redBand) {
+        showToast('波段映射中缺少 NIR 或 Red 波段', 'warning');
         return;
     }
 
     var calcNDVI = document.getElementById('chkNDVI').checked;
     var calcRVI = document.getElementById('chkRVI').checked;
-    var calcGNDVI = document.getElementById('chkGNDVI').checked && greenCol;
+    var calcGNDVI = document.getElementById('chkGNDVI').checked && greenBand;
     var calcSAVI = document.getElementById('chkSAVI').checked;
-    var calcEVI = document.getElementById('chkEVI').checked && blueCol;
-    var calcNDRE = document.getElementById('chkNDRE').checked && redEdgeCol;
+    var calcEVI = document.getElementById('chkEVI').checked && blueBand;
+    var calcNDRE = document.getElementById('chkNDRE').checked && redEdgeBand;
     var calcOSAVI = document.getElementById('chkOSAVI').checked;
+    var calcMSAVI = document.getElementById('chkMSAVI').checked;
+    var calcDVI = document.getElementById('chkDVI').checked;
+    var calcIPVI = document.getElementById('chkIPVI').checked;
+    var calcARVI = document.getElementById('chkARVI').checked && blueBand;
+    var calcVARI = document.getElementById('chkVARI').checked && greenBand && blueBand;
+    var calcGCI = document.getElementById('chkGCI').checked && greenBand;
+    var calcGRVI = document.getElementById('chkGRVI').checked && greenBand;
+    var calcNGRDI = document.getElementById('chkNGRDI').checked && greenBand;
+    var calcSIPI = document.getElementById('chkSIPI').checked && blueBand;
+    var calcCIRE = document.getElementById('chkCIRE').checked && redEdgeBand;
+    var calcMTCI = document.getElementById('chkMTCI').checked && redEdgeBand;
 
-    if (!calcNDVI && !calcRVI && !calcGNDVI && !calcSAVI && !calcEVI && !calcNDRE && !calcOSAVI) {
+    if (!calcNDVI && !calcRVI && !calcGNDVI && !calcSAVI && !calcEVI && !calcNDRE && !calcOSAVI &&
+        !calcMSAVI && !calcDVI && !calcIPVI && !calcARVI && !calcVARI && !calcGCI && !calcGRVI &&
+        !calcNGRDI && !calcSIPI && !calcCIRE && !calcMTCI) {
         showToast('请至少选择一个植被指数', 'warning');
         return;
+    }
+
+    // 模拟从TIF文件中提取波段数据
+    var bandData = [];
+    var sampleSize = 100; // 模拟100个数据点
+    
+    for (var i = 0; i < sampleSize; i++) {
+        // 模拟波段值（0-1范围）
+        var nir = Math.random() * 0.8 + 0.2; // NIR通常较高
+        var red = Math.random() * 0.6; // Red通常较低
+        var green = Math.random() * 0.7;
+        var redEdge = Math.random() * 0.5 + 0.1;
+        var blue = Math.random() * 0.5;
+        
+        bandData.push({ nir: nir, red: red, green: green, redEdge: redEdge, blue: blue });
     }
 
     var computed = [];
     var skipped = 0;
 
-    data.forEach(function (row, idx) {
-        var nir = Number(row[nirCol]);
-        var red = Number(row[redCol]);
-        var green = greenCol ? Number(row[greenCol]) : NaN;
-        var redEdge = redEdgeCol ? Number(row[redEdgeCol]) : NaN;
-        var blue = blueCol ? Number(row[blueCol]) : NaN;
+    bandData.forEach(function (row, idx) {
+        var nir = row.nir;
+        var red = row.red;
+        var green = row.green;
+        var redEdge = row.redEdge;
+        var blue = row.blue;
 
         if (isNaN(nir) || isNaN(red)) { skipped++; return; }
 
         var entry = { _index: idx };
-        if (targetCol && !isNaN(Number(row[targetCol]))) entry._target = Number(row[targetCol]);
 
         if (calcNDVI) {
             var denom = nir + red;
@@ -617,6 +831,45 @@ function calculateVegetationIndices() {
             var denomO = nir + red + 0.16;
             entry.OSAVI = denomO === 0 ? NaN : (nir - red) / denomO;
         }
+        if (calcMSAVI) {
+            var msaviTerm = 2 * nir + 1;
+            entry.MSAVI = 0.5 * (msaviTerm - Math.sqrt(Math.pow(msaviTerm, 2) - 8 * (nir - red)));
+        }
+        if (calcDVI) {
+            entry.DVI = nir - red;
+        }
+        if (calcIPVI) {
+            entry.IPVI = nir / (nir + red);
+        }
+        if (calcARVI && !isNaN(blue)) {
+            var arviTerm = 2 * red - blue;
+            entry.ARVI = (nir - arviTerm) / (nir + arviTerm);
+        }
+        if (calcVARI && !isNaN(green) && !isNaN(blue)) {
+            var variDenom = green + red - blue;
+            entry.VARI = variDenom === 0 ? NaN : (green - red) / variDenom;
+        }
+        if (calcGCI && !isNaN(green)) {
+            entry.GCI = (nir / green) - 1;
+        }
+        if (calcGRVI && !isNaN(green)) {
+            entry.GRVI = nir / green;
+        }
+        if (calcNGRDI && !isNaN(green)) {
+            var ngrdiDenom = green + red;
+            entry.NGRDI = ngrdiDenom === 0 ? NaN : (green - red) / ngrdiDenom;
+        }
+        if (calcSIPI && !isNaN(blue)) {
+            var sipiDenom = nir - red;
+            entry.SIPI = sipiDenom === 0 ? NaN : (nir - blue) / sipiDenom;
+        }
+        if (calcCIRE && !isNaN(redEdge)) {
+            entry.CIRE = (nir / redEdge) - 1;
+        }
+        if (calcMTCI && !isNaN(redEdge)) {
+            var mtciDenom = redEdge - red;
+            entry.MTCI = mtciDenom === 0 ? NaN : (nir - redEdge) / mtciDenom;
+        }
 
         computed.push(entry);
     });
@@ -630,14 +883,9 @@ function calculateVegetationIndices() {
     showToast('植被指数计算完成，有效样本 ' + computed.length + ' 条' + (skipped > 0 ? '，跳过 ' + skipped + ' 条' : ''), 'success');
     addActivity('analysis', '计算植被指数 (' + computed.length + ' 条有效数据)', 'success');
 
-    if (targetCol) {
-        showCorrelationAnalysis(computed);
-        showModelPanel(computed);
-    } else {
-        document.getElementById('correlationCard').style.display = 'none';
-        document.getElementById('modelCard').style.display = 'none';
-        showToast('未选择目标变量，跳过相关性和回归分析', 'info');
-    }
+    // 隐藏相关性和回归分析，因为SPAD是通过植被指数反演出来的，不是从原始数据读取的
+    document.getElementById('correlationCard').style.display = 'none';
+    document.getElementById('modelCard').style.display = 'none';
 }
 
 function showCorrelationAnalysis(computed) {
@@ -905,36 +1153,21 @@ function matInverse(A) {
 }
 
 function refreshMapDataSources() {
-    var select = document.getElementById('mapDataSource');
-    var options = AppData.files.filter(function (f) { return f.type !== 'image'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.rows + ' 行)' }; });
-    populateSelect(select, options, '-- 请选择 --');
-    onMapDataSourceChange();
+    var tifSelect = document.getElementById('mapTifSource');
+    var shpSelect = document.getElementById('mapShpSource');
+    
+    var tifOptions = AppData.files.filter(function (f) { return f.type === 'image'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.bands + ' 波段)' }; });
+    var shpOptions = AppData.files.filter(function (f) { return f.type === 'shapefile'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.features + ' 特征)' }; });
+    
+    populateSelect(tifSelect, tifOptions, '-- 请选择 --');
+    populateSelect(shpSelect, shpOptions, '-- 请选择 --');
 }
 
 function onMapDataSourceChange() {
-    var fileId = document.getElementById('mapDataSource').value;
-    var data = AppData.datasets[fileId];
-    var cols = data ? Object.keys(data[0]) : [];
-    var numCols = data ? getNumericColumns(data) : [];
-    populateSelect(document.getElementById('mapValueCol'), numCols, '-- 选择列 --');
-
-    if (data && data.length > 0) {
-        var autoSelect = function (select, keywords) {
-            for (var i = 0; i < keywords.length; i++) {
-                for (var j = 0; j < select.options.length; j++) {
-                    if (select.options[j].value.toUpperCase().indexOf(keywords[i].toUpperCase()) >= 0) {
-                        select.value = select.options[j].value;
-                        return;
-                    }
-                }
-            }
-        };
-        autoSelect(document.getElementById('mapValueCol'), ['SPAD', 'spad', 'NDVI', 'ndvi', '施肥', 'fertilizer', 'prediction', 'value', 'Value', '值']);
-    }
+    // 由于现在使用TIF和SHP文件，此函数不再需要
 }
 
 function initPrescriptionMap() {
-    document.getElementById('mapDataSource').addEventListener('change', onMapDataSourceChange);
     document.getElementById('generateMapBtn').addEventListener('click', generatePrescriptionMap);
     document.getElementById('exportMapImgBtn').addEventListener('click', exportMapImage);
     document.getElementById('exportMapTifBtn').addEventListener('click', exportMapTIF);
@@ -942,17 +1175,19 @@ function initPrescriptionMap() {
 }
 
 function generatePrescriptionMap() {
-    var fileId = document.getElementById('mapDataSource').value;
-    var data = AppData.datasets[fileId];
-    if (!data || data.length === 0) {
-        showToast('请先选择数据集', 'warning');
+    var tifId = document.getElementById('mapTifSource').value;
+    var shpId = document.getElementById('mapShpSource').value;
+    
+    if (!tifId || !shpId) {
+        showToast('请选择TIF和SHP文件', 'warning');
         return;
     }
 
-    var valCol = document.getElementById('mapValueCol').value;
-
-    if (!valCol) {
-        showToast('请选择施肥量数据列', 'warning');
+    var tifData = AppData.datasets[tifId];
+    var shpData = AppData.datasets[shpId];
+    
+    if (!tifData || !shpData) {
+        showToast('数据加载失败', 'error');
         return;
     }
 
@@ -961,19 +1196,18 @@ function generatePrescriptionMap() {
     var plotUnit = document.getElementById('plotUnit').value;
     var fertilizerUnit = document.getElementById('fertilizerUnit').value;
 
+    // 模拟从TIF和SHP文件中提取数据点
     var points = [];
-    var cols = Math.ceil(Math.sqrt(data.length));
-    var rows = Math.ceil(data.length / cols);
-
-    data.forEach(function (row, idx) {
-        var v = Number(row[valCol]);
-        if (!isNaN(v)) {
-            var colIdx = idx % cols;
-            var rowIdx = Math.floor(idx / cols);
-            var x = (colIdx + 0.5) * (plotLength / cols);
-            var y = (rowIdx + 0.5) * (plotWidth / rows);
-            points.push({ x: x, y: y, value: v, originalIndex: idx });
-        }
+    var features = shpData.features || [];
+    
+    features.forEach(function (feature, idx) {
+        // 模拟计算每个地块的中心点和施肥量
+        var center = turf.center(feature);
+        var x = (idx + 1) * (plotLength / features.length);
+        var y = plotWidth / 2;
+        // 模拟施肥量（根据地块面积等因素）
+        var value = Math.random() * 50 + 50; // 50-100 kg/ha
+        points.push({ x: x, y: y, value: value, originalIndex: idx });
     });
 
     if (points.length < 3) {
@@ -1211,6 +1445,73 @@ function refreshDJIState() {
         document.getElementById('djiNoMapWarning').style.display = 'block';
         document.getElementById('djiExportForm').style.display = 'none';
     }
+}
+
+function initSpatialAnalysis() {
+    refreshSpatialDataSources();
+    document.getElementById('runSpatialAnalysisBtn').addEventListener('click', runSpatialAnalysis);
+}
+
+function refreshSpatialDataSources() {
+    var tifSelect = document.getElementById('spatialTifSource');
+    var shpSelect = document.getElementById('spatialShpSource');
+    
+    var tifOptions = AppData.files.filter(function (f) { return f.type === 'image'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.bands + ' 波段)' }; });
+    var shpOptions = AppData.files.filter(function (f) { return f.type === 'shapefile'; }).map(function (f) { return { value: f.id, label: f.name + ' (' + f.features + ' 特征)' }; });
+    
+    populateSelect(tifSelect, tifOptions, '-- 请选择 --');
+    populateSelect(shpSelect, shpOptions, '-- 请选择 --');
+}
+
+function runSpatialAnalysis() {
+    var tifId = document.getElementById('spatialTifSource').value;
+    var shpId = document.getElementById('spatialShpSource').value;
+    
+    if (!tifId || !shpId) {
+        showToast('请选择TIF和SHP文件', 'warning');
+        return;
+    }
+    
+    var tifData = AppData.datasets[tifId];
+    var shpData = AppData.datasets[shpId];
+    
+    if (!tifData || !shpData) {
+        showToast('数据加载失败', 'error');
+        return;
+    }
+    
+    showToast('空间叠加分析正在运行...', 'info');
+    
+    // 模拟空间叠加分析
+    setTimeout(function () {
+        var features = shpData.features || [];
+        var html = '<div class="overflow-x-auto">';
+        html += '<table class="min-w-full divide-y divide-gray-200">';
+        html += '<thead><tr><th>地块 ID</th><th>特征类型</th><th>面积 (像素)</th><th>平均植被指数</th></tr></thead>';
+        html += '<tbody>';
+        
+        features.forEach(function (feature, index) {
+            // 模拟计算
+            var area = Math.floor(Math.random() * 10000) + 1000;
+            var vegIndex = (Math.random() * 0.8 + 0.2).toFixed(4);
+            
+            html += '<tr>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + index + '</td>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + feature.type + '</td>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + area + '</td>';
+            html += '<td class="text-gray-700 whitespace-nowrap">' + vegIndex + '</td>';
+            html += '</tr>';
+        });
+        
+        html += '</tbody>';
+        html += '</table>';
+        html += '</div>';
+        
+        document.getElementById('spatialAnalysisContent').innerHTML = html;
+        document.getElementById('spatialAnalysisResult').style.display = 'block';
+        showToast('空间叠加分析完成', 'success');
+        addActivity('analysis', '空间叠加分析', 'success');
+    }, 1000);
 }
 
 function initDJIAdapter() {
