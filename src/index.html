@@ -1,7 +1,7 @@
-DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8"><!
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>植物表型数据驱动的智能决策支持系统</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,6 +11,9 @@ DOCTYPE html>
     <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tiff.js@1.0.0/tiff.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tifjs@1.0.0/tif.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shapefile@0.6.6/shapefile.min.js"></script>
+    <script src="https://unpkg.com/geotiff@1.11.1/dist/geotiff.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -99,6 +102,7 @@ DOCTYPE html>
                     <li><a href="#" class="nav-link" data-target="data-management"><i class="fa fa-database w-5 text-center mr-3"></i><span>数据管理</span></a></li>
                     <li><a href="#" class="nav-link" data-target="feature-analysis"><i class="fa fa-line-chart w-5 text-center mr-3"></i><span>植被特征与模型分析</span></a></li>
                     <li><a href="#" class="nav-link" data-target="prescription-map"><i class="fa fa-map w-5 text-center mr-3"></i><span>处方图生成</span></a></li>
+                    <li><a href="#" class="nav-link" data-target="spatial-analysis"><i class="fa fa-globe w-5 text-center mr-3"></i><span>空间叠加分析</span></a></li>
                     <li><a href="#" class="nav-link" data-target="dji-adapter"><i class="fa fa-cog w-5 text-center mr-3"></i><span>大疆智农适配</span></a></li>
                 </ul>
                 <hr class="my-4">
@@ -176,7 +180,7 @@ DOCTYPE html>
                             <div class="p-3 rounded-full bg-primary bg-opacity-10 text-primary"><i class="fa fa-upload fa-lg"></i></div>
                             <div class="ml-4">
                                 <h4 class="font-medium text-gray-800">上传数据</h4>
-                                <p class="text-sm text-gray-500">导入 CSV 或 Excel 数据</p>
+                                <p class="text-sm text-gray-500">导入 TIF、TIFF、SHP 数据</p>
                             </div>
                         </div>
                     </div>
@@ -210,9 +214,9 @@ DOCTYPE html>
                     <div id="dropZone" class="drop-zone">
                         <div class="mb-4"><i class="fa fa-cloud-upload text-5xl text-gray-300"></i></div>
                         <h4 class="text-lg font-medium text-gray-600 mb-2">拖拽文件到此处或点击上传</h4>
-                        <p class="text-sm text-gray-400 mb-4">支持 TIF、CSV、Excel (.xlsx)、JSON 格式</p>
+                        <p class="text-sm text-gray-400 mb-4">支持 TIF、TIFF、SHP 格式</p>
                         <button id="selectFileBtn" class="btn btn-primary"><i class="fa fa-upload mr-1"></i> 选择文件</button>
-                        <input type="file" id="fileInput" class="hidden" accept=".tif,.tiff,.csv,.xlsx,.xls,.json" multiple>
+                        <input type="file" id="fileInput" class="hidden" accept=".tif,.tiff,.shp" multiple>
                     </div>
                 </div>
 
@@ -248,52 +252,138 @@ DOCTYPE html>
 
                 <div class="card mb-8">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">数据源选择</h3>
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">选择已上传的数据集</label>
-                        <select id="featureDataSource" class="input-field">
-                            <option value="">-- 请先上传数据 --</option>
-                        </select>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择TIF文件</label>
+                            <select id="featureTifSource" class="input-field">
+                                <option value="">-- 请选择 --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择SHP文件</label>
+                            <select id="featureShpSource" class="input-field">
+                                <option value="">-- 请选择 --</option>
+                            </select>
+                        </div>
                     </div>
-                    <div id="featureColumnsInfo" class="text-sm text-gray-500" style="display:none;">
-                        <p>检测到以下数值列可用于分析：</p>
-                        <div id="featureColumnsList" class="flex flex-wrap gap-2 mt-2"></div>
-                    </div>
+
                 </div>
 
                 <div class="card mb-8">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">植被指数计算</h3>
-                    <p class="text-sm text-gray-500 mb-4">多光谱波段：红光(Red)、绿光(Green)、近红外(NIR)、红边(RedEdge)；RGB波段：蓝光(Blue)。请根据数据选择对应波段列。</p>
+                    <p class="text-sm text-gray-500 mb-4">第一步：勾选TIF文件中的波段，勾选顺序决定序号。第二步：指定每个序号对应的波段类型。</p>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">近红外波段列 (NIR) <span class="text-red-500">*</span></label>
-                                <select id="nirColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">第一步：波段排序（按勾选顺序）</label>
+                                <div class="border rounded-md overflow-hidden">
+                                    <table class="min-w-full divide-y divide-gray-200">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">选择</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">波段</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">排序序号</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white divide-y divide-gray-200" id="bandSortTable">
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                             <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">红光波段列 (Red) <span class="text-red-500">*</span></label>
-                                <select id="redColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">第二步：序号对应波段类型</label>
+                                <div class="border rounded-md overflow-hidden">
+                                    <table class="min-w-full divide-y divide-gray-200">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">序号</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">对应波段</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">波段类型</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white divide-y divide-gray-200" id="bandTypeTable">
+                                            <tr>
+                                                <td class="px-4 py-2 text-sm font-medium text-gray-900">1</td>
+                                                <td class="px-4 py-2 text-sm text-gray-500" id="order1Band">-</td>
+                                                <td class="px-4 py-2">
+                                                    <select id="order1Type" class="input-field text-sm py-1">
+                                                        <option value="">-- 选择 --</option>
+                                                        <option value="blue">蓝光 (Blue)</option>
+                                                        <option value="green">绿光 (Green)</option>
+                                                        <option value="red">红光 (Red)</option>
+                                                        <option value="nir">近红外 (NIR)</option>
+                                                        <option value="redEdge">红边 (RedEdge)</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="px-4 py-2 text-sm font-medium text-gray-900">2</td>
+                                                <td class="px-4 py-2 text-sm text-gray-500" id="order2Band">-</td>
+                                                <td class="px-4 py-2">
+                                                    <select id="order2Type" class="input-field text-sm py-1">
+                                                        <option value="">-- 选择 --</option>
+                                                        <option value="blue">蓝光 (Blue)</option>
+                                                        <option value="green">绿光 (Green)</option>
+                                                        <option value="red">红光 (Red)</option>
+                                                        <option value="nir">近红外 (NIR)</option>
+                                                        <option value="redEdge">红边 (RedEdge)</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="px-4 py-2 text-sm font-medium text-gray-900">3</td>
+                                                <td class="px-4 py-2 text-sm text-gray-500" id="order3Band">-</td>
+                                                <td class="px-4 py-2">
+                                                    <select id="order3Type" class="input-field text-sm py-1">
+                                                        <option value="">-- 选择 --</option>
+                                                        <option value="blue">蓝光 (Blue)</option>
+                                                        <option value="green">绿光 (Green)</option>
+                                                        <option value="red">红光 (Red)</option>
+                                                        <option value="nir">近红外 (NIR)</option>
+                                                        <option value="redEdge">红边 (RedEdge)</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="px-4 py-2 text-sm font-medium text-gray-900">4</td>
+                                                <td class="px-4 py-2 text-sm text-gray-500" id="order4Band">-</td>
+                                                <td class="px-4 py-2">
+                                                    <select id="order4Type" class="input-field text-sm py-1">
+                                                        <option value="">-- 选择 --</option>
+                                                        <option value="blue">蓝光 (Blue)</option>
+                                                        <option value="green">绿光 (Green)</option>
+                                                        <option value="red">红光 (Red)</option>
+                                                        <option value="nir">近红外 (NIR)</option>
+                                                        <option value="redEdge">红边 (RedEdge)</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="px-4 py-2 text-sm font-medium text-gray-900">5</td>
+                                                <td class="px-4 py-2 text-sm text-gray-500" id="order5Band">-</td>
+                                                <td class="px-4 py-2">
+                                                    <select id="order5Type" class="input-field text-sm py-1">
+                                                        <option value="">-- 选择 --</option>
+                                                        <option value="blue">蓝光 (Blue)</option>
+                                                        <option value="green">绿光 (Green)</option>
+                                                        <option value="red">红光 (Red)</option>
+                                                        <option value="nir">近红外 (NIR)</option>
+                                                        <option value="redEdge">红边 (RedEdge)</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                             <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">绿光波段列 (Green)</label>
-                                <select id="greenColumn" class="input-field"><option value="">-- 选择列 --</option></select>
-                            </div>
-                            <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">红边波段列 (RedEdge)</label>
-                                <select id="redEdgeColumn" class="input-field"><option value="">-- 选择列 --</option></select>
-                            </div>
-                            <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">蓝光波段列 (Blue)</label>
-                                <select id="blueColumn" class="input-field"><option value="">-- 选择列 --</option></select>
-                            </div>
-                            <div class="mb-4">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">目标变量列 (如 SPAD)</label>
-                                <select id="targetColumn" class="input-field"><option value="">-- 选择列 --</option></select>
+                                <button id="applyBandMappingBtn" class="btn btn-secondary w-full"><i class="fa fa-check mr-1"></i> 应用波段设置</button>
                             </div>
                             <button id="calcVegIndicesBtn" class="btn btn-primary"><i class="fa fa-calculator mr-1"></i> 计算植被指数</button>
                         </div>
                         <div>
                             <div class="mb-3 text-sm font-medium text-gray-700">可选植被指数</div>
-                            <div class="space-y-2">
+                            <div class="space-y-2 max-h-80 overflow-y-auto">
                                 <label class="flex items-center"><input type="checkbox" id="chkNDVI" checked class="mr-2"><span class="text-sm text-gray-700">NDVI = (NIR - Red) / (NIR + Red) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
                                 <label class="flex items-center"><input type="checkbox" id="chkRVI" checked class="mr-2"><span class="text-sm text-gray-700">RVI = NIR / Red <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
                                 <label class="flex items-center"><input type="checkbox" id="chkGNDVI" class="mr-2"><span class="text-sm text-gray-700">GNDVI = (NIR - Green) / (NIR + Green) <span class="text-gray-400 text-xs">[需NIR, Green]</span></span></label>
@@ -301,6 +391,19 @@ DOCTYPE html>
                                 <label class="flex items-center"><input type="checkbox" id="chkEVI" class="mr-2"><span class="text-sm text-gray-700">EVI = 2.5 * ((NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)) <span class="text-gray-400 text-xs">[需NIR, Red, Blue]</span></span></label>
                                 <label class="flex items-center"><input type="checkbox" id="chkNDRE" class="mr-2"><span class="text-sm text-gray-700">NDRE = (NIR - RedEdge) / (NIR + RedEdge) <span class="text-gray-400 text-xs">[需NIR, RedEdge]</span></span></label>
                                 <label class="flex items-center"><input type="checkbox" id="chkOSAVI" class="mr-2"><span class="text-sm text-gray-700">OSAVI = (NIR - Red) / (NIR + Red + 0.16) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkMSAVI" class="mr-2"><span class="text-sm text-gray-700">MSAVI = 0.5 * (2*NIR + 1 - sqrt((2*NIR+1)^2 - 8*(NIR-Red))) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkDVI" class="mr-2"><span class="text-sm text-gray-700">DVI = NIR - Red <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkIPVI" class="mr-2"><span class="text-sm text-gray-700">IPVI = NIR / (NIR + Red) <span class="text-gray-400 text-xs">[需NIR, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkARVI" class="mr-2"><span class="text-sm text-gray-700">ARVI = (NIR - (2*Red - Blue)) / (NIR + (2*Red - Blue)) <span class="text-gray-400 text-xs">[需NIR, Red, Blue]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkVARI" class="mr-2"><span class="text-sm text-gray-700">VARI = (Green - Red) / (Green + Red - Blue) <span class="text-gray-400 text-xs">[需Green, Red, Blue]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkGCI" class="mr-2"><span class="text-sm text-gray-700">GCI = (NIR / Green) - 1 <span class="text-gray-400 text-xs">[需NIR, Green]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkGRVI" class="mr-2"><span class="text-sm text-gray-700">GRVI = NIR / Green <span class="text-gray-400 text-xs">[需NIR, Green]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkNGRDI" class="mr-2"><span class="text-sm text-gray-700">NGRDI = (Green - Red) / (Green + Red) <span class="text-gray-400 text-xs">[需Green, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkSIPI" class="mr-2"><span class="text-sm text-gray-700">SIPI = (NIR - Blue) / (NIR - Red) <span class="text-gray-400 text-xs">[需NIR, Red, Blue]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkPRI" class="mr-2"><span class="text-sm text-gray-700">PRI = (Green - Yellow) / (Green + Yellow) <span class="text-gray-400 text-xs">[需Green, Yellow]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkCIRE" class="mr-2"><span class="text-sm text-gray-700">CIRE = (NIR / RedEdge) - 1 <span class="text-gray-400 text-xs">[需NIR, RedEdge]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkMTCI" class="mr-2"><span class="text-sm text-gray-700">MTCI = (NIR - RedEdge) / (RedEdge - Red) <span class="text-gray-400 text-xs">[需NIR, RedEdge, Red]</span></span></label>
+                                <label class="flex items-center"><input type="checkbox" id="chkREIP" class="mr-2"><span class="text-sm text-gray-700">REIP = 700 + 40 * ((Red + Green)/2 - RedEdge1) / (RedEdge2 - RedEdge1) <span class="text-gray-400 text-xs">[需多红边波段]</span></span></label>
                             </div>
                         </div>
                     </div>
@@ -383,26 +486,17 @@ DOCTYPE html>
 
                 <div class="card mb-8">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">处方图配置</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">选择数据集</label>
-                            <select id="mapDataSource" class="input-field"><option value="">-- 请选择 --</option></select>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择TIF文件</label>
+                            <select id="mapTifSource" class="input-field"><option value="">-- 请选择 --</option></select>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">施肥量数据列</label>
-                            <select id="mapValueCol" class="input-field"><option value="">-- 选择列 --</option></select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">插值网格密度</label>
-                            <select id="mapGridSize" class="input-field">
-                                <option value="20">20 x 20</option>
-                                <option value="30" selected>30 x 30</option>
-                                <option value="50">50 x 50</option>
-                                <option value="80">80 x 80</option>
-                            </select>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择SHP文件</label>
+                            <select id="mapShpSource" class="input-field"><option value="">-- 请选择 --</option></select>
                         </div>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">地块长度</label>
                             <input type="number" id="plotLength" class="input-field" placeholder="如 100" step="any">
@@ -410,21 +504,6 @@ DOCTYPE html>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">地块宽度</label>
                             <input type="number" id="plotWidth" class="input-field" placeholder="如 50" step="any">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">单位</label>
-                            <select id="plotUnit" class="input-field">
-                                <option value="m">米</option>
-                                <option value="ha">公顷</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">施肥量单位</label>
-                            <select id="fertilizerUnit" class="input-field">
-                                <option value="kg/ha">kg/ha</option>
-                                <option value="kg/m²">kg/m²</option>
-                                <option value="g/m²">g/m²</option>
-                            </select>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -464,6 +543,37 @@ DOCTYPE html>
                             </div>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- ==================== 空间叠加分析 ==================== -->
+            <section id="spatial-analysis" class="section hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">空间叠加分析</h2>
+
+                <div class="card mb-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">数据源选择</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择TIF文件</label>
+                            <select id="spatialTifSource" class="input-field">
+                                <option value="">-- 请选择 --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择SHP文件</label>
+                            <select id="spatialShpSource" class="input-field">
+                                <option value="">-- 请选择 --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <button id="runSpatialAnalysisBtn" class="btn btn-primary"><i class="fa fa-play mr-1"></i> 运行空间叠加分析</button>
+                    </div>
+                </div>
+
+                <div class="card" id="spatialAnalysisResult" style="display:none;">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">分析结果</h3>
+                    <div id="spatialAnalysisContent"></div>
                 </div>
             </section>
 
@@ -538,23 +648,23 @@ DOCTYPE html>
             <div class="space-y-4 text-sm text-gray-600">
                 <div>
                     <h4 class="font-medium text-gray-800 mb-1">1. 数据管理</h4>
-                    <p>支持上传 CSV、Excel、JSON 格式的数据文件。CSV 文件应包含表头行，数据以逗号分隔。上传后可在页面下方预览数据内容。</p>
+                    <p>支持上传 TIF、TIFF、SHP 格式的文件。TIF/TIFF 为多光谱影像文件，SHP 为地块矢量文件。上传后可在页面下方预览文件信息。</p>
                 </div>
                 <div>
                     <h4 class="font-medium text-gray-800 mb-1">2. 植被特征分析</h4>
-                    <p>选择已上传的数据集，指定近红外(NIR)和红光(Red)波段列，系统将自动计算 NDVI、RVI 等植被指数。如指定了目标变量，可进行相关性和回归分析。</p>
+                    <p>选择已上传的TIF文件，根据勾选顺序为波段排序，并指定每个序号对应的波段类型（蓝光、绿光、红光、近红外、红边），系统将自动计算 NDVI、RVI 等植被指数。</p>
                 </div>
                 <div>
                     <h4 class="font-medium text-gray-800 mb-1">3. 处方图生成</h4>
-                    <p>选择包含坐标和数值的数据集，系统将通过 IDW（反距离加权）插值生成处方图，支持导出为图片或 CSV。</p>
+                    <p>选择TIF和SHP文件，设置地块参数，系统将生成施肥处方图，支持导出为 TIF、PNG 或 CSV 格式。</p>
                 </div>
                 <div>
                     <h4 class="font-medium text-gray-800 mb-1">4. 大疆智农适配</h4>
-                    <p>将处方图数据导出为 CSV 格式，可直接导入大疆智农 App 使用。</p>
+                    <p>将处方图导出为 TIF+TFW 格式，可直接导入大疆智农 App 使用。</p>
                 </div>
                 <div>
                     <h4 class="font-medium text-gray-800 mb-1">数据格式建议</h4>
-                    <p>CSV 文件第一行为列名，后续每行为一条数据记录。数值列不要包含中文单位，纯数字即可。坐标列支持经纬度或局部坐标。</p>
+                    <p>TIF文件应为多光谱正射影像，包含多个波段数据。SHP文件应包含地块边界信息。坐标系建议使用 WGS84 或 CGCS2000。</p>
                 </div>
             </div>
         </div>
